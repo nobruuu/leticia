@@ -6,7 +6,8 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo=$(git -C "$script_dir" rev-parse --show-toplevel)
 docker_bin=${DOCKER_BIN:-docker}
 container=${LETICIA_CONTAINER:-leticia-webapp}
-builder_ref=${LETICIA_BUILDER_IMAGE:-node:16.20.2-bullseye}
+builder_ref=${LETICIA_BUILDER_IMAGE:-node:24.22.3-bookworm}
+runtime_ref=${LETICIA_RUNTIME_IMAGE:-node:24.22.3-bookworm-slim}
 action=${1:-help}
 if (($#)); then shift; fi
 
@@ -19,7 +20,7 @@ fi
 [[ "$action" =~ ^(build|start|verify)$ ]] || { echo 'Unknown action' >&2; exit 1; }
 volume=$("$docker_bin" inspect "$container" --format '{{range .Mounts}}{{if and (eq .Destination "/work") (eq .Type "volume")}}{{.Name}}{{end}}{{end}}')
 [[ -n "$volume" ]] || { echo 'Expected an existing named volume mounted at /work' >&2; exit 1; }
-runtime_id=$("$docker_bin" inspect "$container" --format '{{.Image}}')
+runtime_id=$("$docker_bin" image inspect "$runtime_ref" --format '{{.Id}}')
 builder_id=$("$docker_bin" image inspect "$builder_ref" --format '{{.Id}}')
 echo "container=$container volume=$volume runtime=$runtime_id builder=$builder_id"
 
@@ -78,8 +79,10 @@ case "$action" in
         exit "$result"
       fi
     fi
-    # Verify using the unchanged runtime image, not the builder image.
+    # Verify with the target runtime before replacing the stopped webapp container.
     run_builder --workdir /work "$runtime_id" node scripts/workspace.mjs verify
+    python3 "$script_dir/runtime-container.py" --docker "$docker_bin" \
+      --container "$container" --image "$runtime_id"
     "$docker_bin" start "$container"
     "$docker_bin" exec --workdir /work "$container" node scripts/workspace.mjs verify
     ;;

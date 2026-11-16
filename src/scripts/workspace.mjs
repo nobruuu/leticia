@@ -16,10 +16,10 @@ function command(program, args, options = {}) {
   assert.equal(result.status, 0, `${program} failed; no artifact will be activated`);
 }
 function versions() {
-  assert.equal(process.version, 'v16.20.2', 'This procedure requires baseline Node 16.20.2');
+  assert.equal(process.version, 'v24.22.3', 'This procedure requires Node 24.22.3');
   const npm = spawnSync('npm', ['--version'], { encoding: 'utf8' });
   assert.equal(npm.status, 0, 'Cannot identify npm');
-  assert.equal(npm.stdout.trim(), '8.19.4', 'This procedure requires baseline npm 8.19.4');
+  assert.equal(npm.stdout.trim(), '11.19.1', 'This procedure requires image-bundled npm 11.19.1');
   return { node: process.version, npm: npm.stdout.trim(), platform: process.platform, arch: process.arch };
 }
 function tree(directory, excluded = []) {

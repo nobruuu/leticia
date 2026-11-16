@@ -1,7 +1,7 @@
 # https://www.sentinelstand.com/article/docker-with-node-in-development-and-production
 
 # Base
-FROM node:16 AS base
+FROM node:24.22.3-bookworm AS base
 WORKDIR /app
 RUN groupmod -g 3000 node \
   && usermod -u 3000 node
@@ -15,7 +15,10 @@ RUN cp -n .env.example .env
 RUN npm run build
 
 # Release
-FROM base AS release
+FROM node:24.22.3-bookworm-slim AS release
+WORKDIR /app
+RUN groupmod -g 3000 node \
+  && usermod -u 3000 node
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./package.json

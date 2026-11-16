@@ -1,13 +1,14 @@
-# Workspace reproducible con el entorno baseline
+# Workspace reproducible con Node 24
 
 Este procedimiento utiliza el checkout seleccionado y el volumen existente
-`leticia-5c-work:/work`. No cambia Mongo, Solr, la configuración del contenedor web,
-Node (16.20.2), npm (8.19.4) ni versiones del lockfile. No ejecuta loaders.
+`leticia-5c-work:/work`. Usa Node 24.22.3 y npm 11.19.1 (incluido en sus imágenes),
+sin cambiar Mongo, Solr ni versiones de dependencias del lockfile. No ejecuta loaders.
 
 Requisitos: Bash, Git, Python 3 estándar y Docker CLI en el host. Deben existir
-`leticia-webapp`, su volumen y las imágenes locales Node 16.20.2 bullseye y slim.
-El builder bullseye completo aporta el compilador requerido por `iconv`; la webapp
-sigue ejecutándose en su imagen slim existente. Se usan IDs de imagen resueltos y
+`leticia-webapp`, su volumen y las imágenes locales `node:24.22.3-bookworm` y
+`node:24.22.3-bookworm-slim`. Obtenerlas explícitamente con `docker pull` antes de
+preparar. El builder completo aporta el compilador requerido por `iconv`; la webapp
+usa la imagen slim de la misma versión. Se usan IDs de imagen resueltos y
 `--pull=never`: no se descarga una imagen nueva silenciosamente.
 
 ## Preparar e instalar/construir
@@ -30,7 +31,7 @@ El candidato incluye sólo archivos versionados/no ignorados de `src/`: sin
 node_modules, build previo, corpus, archivos dotenv privados ni fuentes de otro
 directorio. Los borrados locales se respetan. Los symlinks fuente se rechazan.
 
-Se ejecuta, con Node 16.20.2 y npm 8.19.4:
+Se ejecuta, con Node 24.22.3 y npm 11.19.1:
 
 ```text
 npm ci --include=dev --no-audit --no-fund
@@ -74,8 +75,17 @@ restauración mantiene la webapp detenida y muestra la ruta recuperable; no cont
 con una activación parcial. Las copias comparten volumen: protegen la reconstrucción,
 pero no sustituyen un backup externo ante pérdida del volumen/Docker Desktop.
 
-Antes de iniciar, se verifica también con la imagen runtime existente. El contenedor
-mantiene su comando `npm run docker-start`, que ejecuta `/work/build/index.js`.
+Antes de iniciar, se verifica también con la imagen runtime objetivo. Si su ID
+difiere del contenedor existente, `runtime-container.py` conserva ese contenedor
+detenido con nombre `leticia-webapp-runtime-backup-ID` y crea únicamente la webapp
+con la imagen nueva. Conserva volumen, usuario, directorio, comando, puertos,
+redes/aliases, variables personalizadas y política de reinicio del baseline.
+Los defaults de imagen NODE_VERSION/YARN_VERSION proceden de la imagen nueva.
+No muestra secretos: utiliza un env-file temporal con permisos 0600 que se elimina.
+Mongo y Solr no se recrean. Un fallo al crear el contenedor restaura el nombre
+anterior y mantiene la webapp detenida para no arrancar un runtime incompatible.
+Volver a Node 16 requiere restaurar también su workspace/node_modules desde backup.
+El comando sigue siendo `npm run docker-start`, que ejecuta `/work/build/index.js`.
 `start` sin BUILD_ID verifica y arranca la activación actual, sin reconstruirla.
 No reconstruir por fuera de este procedimiento si se quiere conservar la evidencia:
 `verify` detecta cambios en fuentes, build y dependencias instaladas.
@@ -89,7 +99,7 @@ no crea `.env` y no usa `.env.example` como configuración efectiva.
 
 El backend conserva las variables configuradas en `leticia-webapp` (procedentes del
 setup runtime existente, por ejemplo `leticia-runtime.env`). No se modifica ese
-archivo ni se recrea el contenedor. CURRENT_SESSION_FLOW sigue siendo runtime;
+archivo; al sustituir la imagen se conservan sus variables. CURRENT_SESSION_FLOW sigue siendo runtime;
 VITE_CURRENT_SESSION_FLOW sigue incorporándose al bundle. Este bloque no cambia
 su selección ni sus valores, y no unifica ambos mecanismos.
 
@@ -118,10 +128,11 @@ Si el shim `docker` de WSL no funciona, seleccionar el CLI existente, por ejempl
 export DOCKER_BIN=/mnt/wsl/docker-desktop/cli-tools/usr/bin/docker
 ```
 
-Opcionales: `LETICIA_CONTAINER` y `LETICIA_BUILDER_IMAGE`. La imagen builder debe
-existir localmente y seguir cumpliendo las versiones baseline comprobadas.
+Opcionales: `LETICIA_CONTAINER`, `LETICIA_BUILDER_IMAGE` y `LETICIA_RUNTIME_IMAGE`.
+Las imágenes deben existir localmente y cumplir las versiones objetivo comprobadas.
 
 El Dockerfile/Compose histórico sigue siendo otro flujo basado en `/app` y
-`npm install`; no se utiliza ni se modifica aquí. La copia histórica hacia `/work`
+`npm install`; también referencia Node 24.22.3, pero no se utiliza para este workflow.
+La copia histórica hacia `/work`
 no tenía un procedimiento versionado verificable. El flujo anterior se conserva
 como referencia, no como evidencia de este nuevo procedimiento.
