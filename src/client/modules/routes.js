@@ -377,19 +377,6 @@ router.beforeEach((to, from, next) => {
   const currentRoute = store.state.currentRoute;
   const loggedIn = localStorage.getItem('leticia-user');
 
-  if (loggedIn) {
-    const sender = new ActionSender('Router');
-    let oldRoute = from.path;
-
-    let msg = {
-      path: from.path,
-      fullPath: from.fullPath
-    };
-
-    sender.sendVisitedPage(msg, false)
-      .then((res) => { console.log('PageExit Sent!', oldRoute, res.data.message) });
-  }
-  
   if (currentRoute && !isEmptyObject(currentRoute) && isFirstTransition && to.name !== currentRoute.name) {
     next(currentRoute);
   }
@@ -411,6 +398,10 @@ router.afterEach((to, from) => {
   const loggedIn = localStorage.getItem('leticia-user');
 
   if (loggedIn) {
+    // Log only confirmed navigation: redirects/aborted guards must not add exits.
+    const exitSender = new ActionSender('Router');
+    exitSender.sendVisitedPage({ path: from.path, fullPath: from.fullPath }, false)
+      .then(res => console.log('PageExit Sent!', from.path, res.data.message));
     //store.commit({ type: 'setCurrentRoute', route: parseCircularObject(to) });
 
     const sender = new ActionSender('Router');

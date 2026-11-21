@@ -31,9 +31,14 @@ import Axios from 'axios';
 import * as Constants from '../../services/Constants';
 import ActionSender from '../../services/ActionSender';
 import EventBus from '../../modules/eventBus';
+import { stopChallengeCoordinator } from '../../modules/challengeCoordinator';
 
 export default {
   name: 'UserHub',
+
+  data() {
+    return { resuming: false };
+  },
 
   computed: {
     loggedIn() {
@@ -50,38 +55,48 @@ export default {
   },
 
   methods: {
-    resumeStudy(evt) {
-      // Resume stage from challenge
-      if (this.$store.getters.flowIndex >= 0) {
-        console.log('Resuming Challenge!');
+    async resumeStudy(evt) {
+      if (this.resuming) return;
+      this.resuming = true;
+      try {
+        await stopChallengeCoordinator();
+        // Resume stage from challenge
+        if (this.$store.getters.flowIndex >= 0) {
+          console.log('Resuming Challenge!');
             
-        let nextFlowStage = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].path;
-        let nextFlowParams = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].params;
-        let nextFlowTimeLimit = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].timeLimit;
+          let nextFlowStage = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].path;
+          let nextFlowParams = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].params;
+          let nextFlowTimeLimit = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].timeLimit;
 
-        if (nextFlowTimeLimit > 0) {
-          EventBus.$emit('leticia-timer-create', { totalTime: this.$store.state.timerTime });
+          const timerTime = this.$store.state.timerTime;
+          await this.saveUserData();
+          if (nextFlowTimeLimit > 0) {
+            EventBus.$emit('leticia-timer-create', { totalTime: timerTime });
+          }
+          await this.$router.replace({ path: nextFlowStage });
         }
-
-        this.saveUserData();
-        this.$router.replace({ path: nextFlowStage });
-      }
-      // Start new challenge
-      else {
-        console.log('Starting Challenge!');
-        this.$store.commit({ type: 'setFlowIndex', amount: 0 });
+        // Start new challenge
+        else {
+          console.log('Starting Challenge!');
+          this.$store.commit({ type: 'setFlowIndex', amount: 0 });
         
-        let nextFlowStage = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].path;
-        let nextFlowParams = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].params;
-        let nextFlowTimeLimit = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].timeLimit;
+          let nextFlowStage = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].path;
+          let nextFlowParams = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].params;
+          let nextFlowTimeLimit = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].timeLimit;
         
-        if (nextFlowTimeLimit > 0) {
-          EventBus.$emit('leticia-timer-create', { totalTime: nextFlowTimeLimit });
+          const timerTime = nextFlowTimeLimit;
+          await this.saveUserData();
+          if (nextFlowTimeLimit > 0) {
+            EventBus.$emit('leticia-timer-create', { totalTime: timerTime });
+          }
+          await this.$router.replace({ path: nextFlowStage });
         }
-
-        this.saveUserData();
-        this.$router.replace({ path: nextFlowStage });
       }
+      catch (err) {
+        console.error(err);
+        alert('An error ocurred while saving session progress [Code 462-SAVE]');
+      }
+      finally { this.resuming = false; }
     },
     saveUserData() {
       let userdata = {
@@ -90,9 +105,12 @@ export default {
         sessionFlow: this.$store.getters.sessionFlow
       };
 
-      Axios.post(`${Constants.backendApiUrl}/userdata/${this.currentUser.username}`, userdata)
+      return Axios.post(`${Constants.backendApiUrl}/userdata/${this.currentUser.username}`, userdata)
         .then(res => console.log('UserData saved on server!'))
-        .catch(err => console.error('Error while saving UserData on server', err));
+        .catch(err => {
+          console.error('Error while saving UserData on server', err);
+          throw err;
+        });
     }
   }
 }

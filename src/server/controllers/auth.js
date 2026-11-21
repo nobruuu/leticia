@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import hrrs from 'human-readable-random-string';
 
 import config from '../config/auth.js';
+import { selectSessionFlow } from '../sessionFlow.js';
 import db from '../models/index.js';
 
 import * as Constants from '../constants.js';
@@ -84,6 +85,8 @@ export const register = async (req, res) => {
       
       let userdata = new UserData({ username: user.username, state: {}, sessionFlow: {} });
       await userdata.save();
+
+      sessionFlow = selectSessionFlow(userdata, sessionFlow);
 
       res.cookie('jwt', JSON.stringify(jwtData));
       res.cookie('sessionflow', JSON.stringify(sessionFlow));
@@ -190,6 +193,8 @@ export const login = async (req, res) => {
         let sessionFlowId = Constants.currentSessionFlow;
         let sessionFlow = await SessionFlow.findOne({ sessionFlowId: sessionFlowId }).exec();
         let userdata = await UserData.findOne({ username: jwtData.username }).exec();
+
+        sessionFlow = selectSessionFlow(userdata, sessionFlow);
 
         res.cookie('jwt', JSON.stringify(jwtData));
         res.cookie('sessionflow', JSON.stringify(sessionFlow));
@@ -305,6 +310,8 @@ export const googleLogin = async (req, res) => {
         let sessionFlow = await SessionFlow.findOne({ sessionFlowId: sessionFlowId }).exec();
         let userdata = await UserData.findOne({ username: jwtData.username }).exec();
 
+        sessionFlow = selectSessionFlow(userdata, sessionFlow);
+
         res.cookie('jwt', JSON.stringify(jwtData));
         res.cookie('sessionflow', JSON.stringify(sessionFlow));
         res.cookie('userdata', JSON.stringify(userdata.state));
@@ -364,6 +371,8 @@ export const googleLogin = async (req, res) => {
       
       let userdata = new UserData({ username: user.username, state: {}, sessionFlow: {} });
       await userdata.save();
+
+      sessionFlow = selectSessionFlow(userdata, sessionFlow);
 
       res.cookie('jwt', JSON.stringify(jwtData));
       res.cookie('sessionflow', JSON.stringify(sessionFlow));
@@ -431,6 +440,8 @@ export const facebookLogin = async (req, res) => {
         let sessionFlow = await SessionFlow.findOne({ sessionFlowId: sessionFlowId }).exec();
         let userdata = await UserData.findOne({ username: jwtData.username }).exec();
 
+        sessionFlow = selectSessionFlow(userdata, sessionFlow);
+
         res.cookie('jwt', JSON.stringify(jwtData));
         res.cookie('sessionflow', JSON.stringify(sessionFlow));
         res.cookie('userdata', JSON.stringify(userdata.state));
@@ -492,6 +503,8 @@ export const facebookLogin = async (req, res) => {
       
       let userdata = new UserData({ username: user.username, state: {}, sessionFlow: {} });
       await userdata.save();
+
+      sessionFlow = selectSessionFlow(userdata, sessionFlow);
 
       res.cookie('jwt', JSON.stringify(jwtData));
       res.cookie('sessionflow', JSON.stringify(sessionFlow));

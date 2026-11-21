@@ -88,7 +88,7 @@
               <div>
                 <b-link
                   class="result-title"
-                  :to="{ name: 'page', query: { id: doc.docId_s }, params: { doc: doc }}"
+                  :href="$router.resolve({ name: 'page', query: { id: doc.docId_s }}).href"
                   @auxclick.prevent.stop
                   @click="searchResultClick($event, doc)"
                 >
@@ -245,6 +245,8 @@ export default {
     console.log('Trackers disabled!');
 
     clearInterval(this.mouseBufferInterval);
+    this.mouseMoveListener.cancel();
+    this.scrollListener.cancel();
 
     EventBus.$emit('leticia-current-task', { currentTask: false });
   },
@@ -361,11 +363,17 @@ export default {
       this.$router.push({ path: '/search', query: { task: this.taskId, q: this.query, p: (this.currentPage || 1) }});
     },
     searchResultClick(evt, doc) {
+      this.$store.commit({ type: 'setLastVisitedDoc', doc });
       let act = this.actionHandler.searchResultClick(evt, doc);
 
       this.sender.sendGenericAction(act)
         .then(res => console.log(res.data))
         .catch(err => console.error(err));
+      // Match Router 3: modified/non-primary clicks keep browser navigation.
+      if (evt.metaKey || evt.altKey || evt.ctrlKey || evt.shiftKey || evt.defaultPrevented ||
+          (evt.button !== undefined && evt.button !== 0)) return;
+      evt.preventDefault();
+      return this.$router.push({ name: 'page', query: { id: doc.docId_s }});
     },
     searchAction(queryText) {
       let act = {

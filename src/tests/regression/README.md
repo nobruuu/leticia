@@ -126,7 +126,7 @@ configuración. No detecta todas las transformaciones posibles ni recursos remot
 
 ## E2E manual por checkpoint
 
-Usar otro email reconocible, por ejemplo `regression-e2e-cp0@leticia.invalid`,
+Usar otro email reconocible, por ejemplo `regression-e2e@leticia.invalid`,
 identificar su username y anotar fecha, checkpoint, URL, navegador y resultado.
 El E2E **sí** deja actividad experimental y solicita shuffle una vez al asignar;
 no mezclarlo con el smoke ni tratar de reiniciar el contador global.
@@ -187,3 +187,47 @@ Pruebas dirigidas con otra cuenta E2E si corresponde:
   queda pendiente ejecutar smoke contra el corpus, auth/persistencia reales,
   helper contra un build real con sentinel inyectado y E2E manual. No se arrancó
   infraestructura ni se escribieron registros de la aplicación.
+
+## EventBus, determinismo de flujo y navegación (Vue 2)
+
+`npm run test:flow` usa Node y los scripts reales de componentes Vue 2 con I/O
+controlada, sin Jest/Vitest ni escrituras API/Mongo. Comprueba sincronía/payload/orden
+y `$off` del adaptador mitt, reemplazo del coordinador al reentrar, supervivencia
+tras destruir Challenge, índice 0, asignación persistida antes de navegar, tasks y
+flow conservados, rechazo de snapshots incompatibles, guardados lentos antes del
+avance global, error de persistencia sin navegación, selección documental y timer.
+Los errores de snapshot provocados por el test son intencionales.
+
+El coordinador permanece activo al navegar desde `/challenge` a sus vistas hermanas.
+Al reentrar, se reemplaza únicamente el coordinador anterior; el avance global,
+UserHub y logout lo retiran y esperan cualquier transición interna pendiente.
+No se elimina en `beforeDestroy`. La inicialización también cuenta como transición
+pendiente. Los eventos del bus siguen siendo síncronos; los avances esperan su
+snapshot antes de navegar y descartan dobles emisiones mientras están pendientes.
+
+Autenticación conserva el flow persistido válido. Una asignación sin flow válido
+se rechaza durante login; un snapshot genérico cuyas etapas/índices no coinciden
+con el flow se detiene con el aviso de carga existente. No se transforma ni
+reasigna automáticamente. La configuración frontend sólo sirve de fallback cuando
+no existe flow válido ni asignación. Las pruebas verifican la restauración del
+índice 0 sin reasignar tareas.
+
+`flow-browser.mjs` es un recorrido corto complementario en Chromium con Playwright
+externo al proyecto. Usa el build real, GET reales para flow/tasks/search/documentos,
+identidad local ficticia y shuffle/POST interceptados; no escribe datos experimentales.
+Comprueba snapshot inicial antes de salir, recarga/reentrada, avance único y tres
+ciclos Search/documento/back con id, URL, PageEnter/PageExit, trackers y timer;
+además verifica el rechazo visible de id incorrecto tras recarga.
+
+Ejemplo con una imagen local que ya contenga Playwright/Chromium y la webapp activa:
+
+```bash
+docker run --rm --pull=never --network container:leticia-webapp \
+  --mount "type=bind,source=$PWD/src/tests/regression/flow-browser.mjs,target=/tmp/flow-browser.mjs,readonly" \
+  --entrypoint node IMAGEN_LOCAL_CON_PLAYWRIGHT /tmp/flow-browser.mjs
+```
+
+Opcionales: `FLOW_TEST_PLAYWRIGHT_MODULE` (ruta absoluta al módulo externo) y
+`FLOW_TEST_BASE_URL` (default `http://localhost:3000`). No instala herramientas ni cambia
+las dependencias del runtime LETICIA. Estas pruebas controladas complementan el
+smoke y `test:persistence` read-only; no sustituyen un estudio E2E con escrituras.

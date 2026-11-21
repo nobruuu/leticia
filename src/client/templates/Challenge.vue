@@ -23,9 +23,11 @@
 <script>
 // TODO implement generic challenge
 import Axios from 'axios';
+import { isEqual } from 'lodash';
 
 import ActionSender from '../services/ActionSender';
 import EventBus from '../modules/eventBus';
+import { registerChallengeCoordinator, runChallengeTransition } from '../modules/challengeCoordinator';
 import Timer from '../services/Timer';
 
 import * as Constants from '../services/Constants';
@@ -65,38 +67,56 @@ export default {
   // next-stage: Advance to the following global action (Consent, Demographic, TypingTest, ShortChallenge, etc.)
   // next-challenge: Advance to the following step inside a challenge (Short or Extended)
   created() {
-    EventBus.$on('leticia-next-challenge', () => {
-      console.log('LETICIA Next Challenge!');
-
-      this.nextChallenge();
-      this.loadChallenge();
-      this.saveUserData();
-    });
+    registerChallengeCoordinator(this.advanceChallenge);
   },
 
   mounted() {
-    // Begin the challenge from start
-    if (!this.$store.getters.stageIndex) {
-      let p1 = this.importTasks();
-      let p2 = this.importSessionFlow();
-
-      Promise.all([p1, p2])
-        .then(() => {
-          this.createStages();
-          this.startChallenge();
-        })
-        .catch((err) => {
-          console.error(err);
-          alert('An error ocurred while loading the challenge [Code 462-G0]');
-        });
-    }
-    // If user has already begun the challenge
-    else {
-      this.loadChallenge();
-    }
+    return runChallengeTransition(() => this.initializeChallenge());
   },
 
+  // The coordinator intentionally survives navigation to sibling substages.
   methods: {
+    async initializeChallenge() {
+      try {
+        await this.importSessionFlow();
+        // Begin the challenge from start
+        if (this.$store.getters.stageIndex == null) {
+          // A partial assignment is not permission to shuffle the user's tasks again.
+          if (this.$store.getters.tasks?.length || this.$store.getters.stages?.length) {
+            throw new Error('Incomplete challenge snapshot');
+          }
+          await this.importTasks();
+          this.createStages();
+          await this.startChallenge();
+        }
+        // If user has already begun the challenge
+        else {
+          this.validateAssignment();
+          await this.saveUserData();
+          await this.loadChallenge();
+        }
+      }
+      catch (err) {
+        console.error(err);
+        alert('An error ocurred while loading the challenge [Code 462-G0]');
+      }
+    },
+    async advanceChallenge() {
+      console.log('LETICIA Next Challenge!');
+
+      try {
+        this.nextChallenge();
+        await this.saveUserData().catch(err => {
+          this.$store.commit({ type: 'setStageIndex', amount: this.$store.getters.stageIndex - 1 });
+          throw err;
+        });
+        await this.loadChallenge();
+      }
+      catch (err) {
+        console.error(err);
+        alert('An error ocurred while advancing the challenge [Code 462-SAVE]');
+      }
+    },
     importTasks() {
       return Axios.get(`${Constants.backendApiUrl}/tasks/shuffle?username=${this.currentUser.username}&num=${this.taskAmount}`)
         .then((res) => {
@@ -111,9 +131,21 @@ export default {
         });
     },
     importSessionFlow() {
+      const flow = this.$store.getters.sessionFlow;
+      if (flow && Array.isArray(flow.stages) && flow.stages.length) {
+        this.sessionFlow = flow;
+        return Promise.resolve();
+      }
+      if (this.$store.getters.stageIndex != null || this.$store.getters.tasks?.length) {
+        return Promise.reject(new Error('Assigned challenge has no valid session flow'));
+      }
       return Axios.get(`${Constants.backendApiUrl}/flows/${Constants.currentSessionFlow}`)
         .then((res) => {
+          if (!Array.isArray(res.data?.stages) || !res.data.stages.length) {
+            throw new Error('Invalid session flow');
+          }
           this.sessionFlow = res.data;
+          this.$store.commit({ type: 'setSessionFlow', sessionFlow: res.data });
           console.log('Session Flow (stages) loaded!', Constants.currentSessionFlow, this.sessionFlow);
           return Promise.resolve();
         })
@@ -124,6 +156,18 @@ export default {
         });
     },
     createStages() {
+      this.$store.commit({ type: 'setStages', stages: this.buildStages() });
+    },
+    validateAssignment() {
+      const { stageIndex, tasks, stages, sessionFlow, flowIndex } = this.$store.getters;
+      if (!Number.isInteger(stageIndex) || stageIndex < 0 || !tasks?.length ||
+          !Array.isArray(stages) || stageIndex > stages.length ||
+          sessionFlow.stages[flowIndex]?.path !== this.challengePath ||
+          !isEqual(stages, this.buildStages())) {
+        throw new Error('Challenge snapshot does not match the session flow; resume stopped');
+      }
+    },
+    buildStages() {
       let userStages = [];
       this.$store.getters.tasks.forEach(el1 => {
         // Check for custom session flow
@@ -163,14 +207,14 @@ export default {
         }
       });
       
-      this.$store.commit({ type: 'setStages', stages: userStages });
-      console.log('Challenge Stages loaded!', userStages);
+      return userStages;
     },
-    startChallenge() {
+    async startChallenge() {
       this.$store.commit({ type: 'setStageIndex', amount: 0 });
       let nextStage = this.$store.getters.stages[this.$store.getters.stageIndex];
       console.log('StartChallenge!', nextStage);
-      this.$router.replace(nextStage);
+      await this.saveUserData();
+      return this.$router.replace(nextStage);
     },
     nextChallenge() {
       this.$store.commit({ type: 'nextStageIndex' });
@@ -183,7 +227,7 @@ export default {
       if (idx < len) {
         let nextStage = this.$store.getters.stages[this.$store.getters.stageIndex];
         console.log('LoadChallenge!', this.$store.getters.stageIndex, nextStage);
-        this.$router.replace(nextStage);
+        return this.$router.replace(nextStage);
       }
       else {
         EventBus.$emit('leticia-timer-stop');
@@ -197,9 +241,12 @@ export default {
         sessionFlow: this.$store.getters.sessionFlow
       };
 
-      Axios.post(`${Constants.backendApiUrl}/userdata/${this.currentUser.username}`, userdata)
+      return Axios.post(`${Constants.backendApiUrl}/userdata/${this.currentUser.username}`, userdata)
         .then(res => console.log('UserData saved on server!'))
-        .catch(err => console.error('Error while saving UserData on server', err));
+        .catch(err => {
+          console.error('Error while saving UserData on server', err);
+          throw err;
+        });
     }
   }
 }

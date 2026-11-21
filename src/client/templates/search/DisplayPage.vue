@@ -30,7 +30,7 @@ export default {
       pageId: '',
       doc: {},
       iframeElement: null,
-      renderPage: true,
+      renderPage: false,
       mHandler: new MouseHandler('Page'),
       scHandler: new ScrollHandler('Page'),
       sender: new ActionSender('Page'),
@@ -42,73 +42,66 @@ export default {
     }
   },
 
-  mounted() {
+  async mounted() {
     this.visitPage();
+    await this.$nextTick();
+    this.startTracking();
+  },
 
-    this.mouseMoveListener = throttle(this.move, 250);
-    this.mouseClickListener = this.click;
-    this.scrollListener = throttle(this.scroll, 250);
-
-    this.iframeElement = this.$refs.pageIframe;
-    
-    this.iframeElement.onload = () => {
-      let iwin = this.iframeElement.contentWindow;
-      
-      iwin.addEventListener('mousemove', this.mouseMoveListener);
-      iwin.addEventListener('click', this.mouseClickListener);
-      iwin.addEventListener('scroll', this.scrollListener);
-
-      console.log('Trackers enabled!');
-    };
-
-    this.mouseBufferInterval = setInterval(() => {
-      console.log('Emptying Mouse Buffer!');
-      this.sendMouseBuffer();
-    }, 15000);
-
-    EventBus.$emit('leticia-bookmark-button-status', { status: true, doc: this.doc });
-    EventBus.$emit('leticia-current-task', { currentTask: true });
+  watch: {
+    async '$route.query.id'() {
+      this.stopTracking();
+      this.visitPage();
+      await this.$nextTick();
+      this.startTracking();
+    }
   },
 
   beforeDestroy() {
-    let iwin = this.iframeElement.contentWindow;
-
-    if (!!this.iframeElement && !!iwin) {
-      iwin.removeEventListener('mousemove', this.mouseMoveListener);
-      iwin.removeEventListener('click', this.mouseClickListener);
-      iwin.removeEventListener('scroll', this.scrollListener);
-
-      console.log('Trackers disabled!');
-    }
-
-    clearInterval(this.mouseBufferInterval);
-
+    this.stopTracking();
     EventBus.$emit('leticia-bookmark-button-status', { status: false, doc: null });
     EventBus.$emit('leticia-current-task', { currentTask: false });
   },
 
   methods: {
+    startTracking() {
+      if (this._isDestroyed || !this.renderPage || !this.$refs.pageIframe) return;
+      this.mouseMoveListener = throttle(this.move, 250);
+      this.mouseClickListener = this.click;
+      this.scrollListener = throttle(this.scroll, 250);
+      this.iframeElement = this.$refs.pageIframe;
+      this.iframeElement.onload = () => {
+        const iwin = this.iframeElement.contentWindow;
+        iwin.addEventListener('mousemove', this.mouseMoveListener);
+        iwin.addEventListener('click', this.mouseClickListener);
+        iwin.addEventListener('scroll', this.scrollListener);
+      };
+      this.mouseBufferInterval = setInterval(() => this.sendMouseBuffer(), 15000);
+    },
+    stopTracking() {
+      const iwin = this.iframeElement && this.iframeElement.contentWindow;
+      if (iwin) {
+        iwin.removeEventListener('mousemove', this.mouseMoveListener);
+        iwin.removeEventListener('click', this.mouseClickListener);
+        iwin.removeEventListener('scroll', this.scrollListener);
+        this.iframeElement.onload = null;
+      }
+      if (this.mouseMoveListener) this.mouseMoveListener.cancel();
+      if (this.scrollListener) this.scrollListener.cancel();
+      clearInterval(this.mouseBufferInterval);
+      this.mouseBufferInterval = null;
+      this.iframeElement = null;
+    },
     visitPage() {
-      if (!!this.$route.query.id && !!this.$route.params.doc) {
-        this.$store.commit({ type: 'setLastVisitedDoc', doc: this.$route.params.doc });
-        this.doc = this.$route.params.doc;
-        this.pageUrl = `${Constants.backendUrl}${this.doc.path_s}`;
-        this.pageId = this.$route.query.id || '';
-        this.renderPage = true;
-      }
-      else {
-        let lastPage = this.$store.getters.lastVisitedDoc;
-
-        if (!!lastPage) {
-          this.pageUrl = `${Constants.backendUrl}${lastPage.path_s}`;
-          this.pageId = this.$route.query.id || '';
-          this.renderPage = true;
-        }
-        else {
-          this.renderPage = false;
-        }
-      }
-      
+      const doc = this.$store.getters.lastVisitedDoc;
+      const id = this.$route.query.id;
+      this.renderPage = typeof id === 'string' && !!id &&
+        !!doc && doc.docId_s === id && !!doc.path_s;
+      this.doc = this.renderPage ? doc : {};
+      this.pageId = this.renderPage ? id : '';
+      this.pageUrl = this.renderPage ? `${Constants.backendUrl}${doc.path_s}` : '';
+      EventBus.$emit('leticia-bookmark-button-status', { status: this.renderPage, doc: this.renderPage ? doc : null });
+      EventBus.$emit('leticia-current-task', { currentTask: this.renderPage });
       console.log('Visiting page!', this.pageId, this.pageUrl);
     },
     goBack() {

@@ -73,6 +73,7 @@
 import ActionSender from '../services/ActionSender';
 import BookmarkService from '../services/Bookmark';
 import EventBus from '../modules/eventBus';
+import { stopChallengeCoordinator } from '../modules/challengeCoordinator';
 
 import Timer from '../services/Timer';
 import { toHHMMSS } from '../services/Utils';
@@ -119,7 +120,7 @@ export default {
       }
     },
     currentTask() {
-      let nextStage = (!!this.$store.getters.stages && !!this.$store.getters.stageIndex) ? this.$store.getters.stages[this.$store.getters.stageIndex] : null;
+      let nextStage = (!!this.$store.getters.stages && this.$store.getters.stageIndex != null) ? this.$store.getters.stages[this.$store.getters.stageIndex] : null;
       let stageName = nextStage ? nextStage.query.task : '';
       return stageName;
     },
@@ -134,6 +135,7 @@ export default {
 
   created() {
     EventBus.$on('leticia-timer-create', (data) => {
+      if (this.timer) this.timer.stop();
       this.timer = new Timer(data.totalTime);
       this.timer.start();
     });
@@ -168,7 +170,8 @@ export default {
   },
 
   methods: {
-    logout() {
+    async logout() {
+      await stopChallengeCoordinator();
       EventBus.$emit('leticia-timer-stop');
 
       const sender = new ActionSender('UserLog');

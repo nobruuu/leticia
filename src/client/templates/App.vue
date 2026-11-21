@@ -10,6 +10,7 @@ import Axios from 'axios';
 
 import * as Constants from '../services/Constants';
 import EventBus from '../modules/eventBus';
+import { stopChallengeCoordinator } from '../modules/challengeCoordinator';
 import ActionSender from '../services/ActionSender';
 import Navbar from './Navbar.vue';
 
@@ -38,33 +39,52 @@ export default {
   },
 
   created() {
-    EventBus.$on('leticia-next-stage', () => {
-      console.log('LETICIA Next Stage!');
-      if (this.$store.getters.flowIndex >= 0) this.$store.commit({ type: 'nextFlowIndex' });
-      else this.$store.commit({ type: 'setFlowIndex', amount: 0 });
+    let advancing = false;
+    EventBus.$on('leticia-next-stage', async () => {
+      if (advancing) return;
+      advancing = true;
+      try {
+        await stopChallengeCoordinator();
+        console.log('LETICIA Next Stage!');
+        const previousFlowIndex = this.$store.getters.flowIndex;
+        if (this.$store.getters.flowIndex >= 0) this.$store.commit({ type: 'nextFlowIndex' });
+        else this.$store.commit({ type: 'setFlowIndex', amount: 0 });
 
-      let nextFlowStage = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].path;
-      let nextFlowParams = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].params;
-      let nextFlowTimeLimit = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].timeLimit;
+        let nextFlowStage = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].path;
+        let nextFlowParams = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].params;
+        let nextFlowTimeLimit = this.$store.getters.sessionFlow.stages[this.$store.getters.flowIndex].timeLimit;
 
-      let userdata = {
-        username: this.currentUser.username,
-        state: this.$store.getters.userData,
-        sessionFlow: this.$store.getters.sessionFlow
-      };
+        let userdata = {
+          username: this.currentUser.username,
+          state: this.$store.getters.userData,
+          sessionFlow: this.$store.getters.sessionFlow
+        };
 
-      Axios.post(`${Constants.backendApiUrl}/userdata/${this.currentUser.username}`, userdata)
-        .then(res => console.log('UserData saved on server!'))
-        .catch(err => console.error('Error while saving UserData on server', err));
+        if (nextFlowTimeLimit > 0) {
+          EventBus.$emit('leticia-timer-create', { totalTime: nextFlowTimeLimit * 60 });
+        }
 
-      if (nextFlowTimeLimit > 0) {
-        EventBus.$emit('leticia-timer-create', { totalTime: nextFlowTimeLimit * 60 });
+        // Timer creation updates state; capture it before persisting the transition.
+        userdata.state = this.$store.getters.userData;
+        await Axios.post(`${Constants.backendApiUrl}/userdata/${this.currentUser.username}`, userdata)
+          .catch(err => {
+            this.$store.commit({ type: 'setFlowIndex', amount: previousFlowIndex });
+            EventBus.$emit('leticia-timer-stop');
+            throw err;
+          });
+        await this.$router.replace({ path: nextFlowStage });
       }
-
-      this.$router.replace({ path: nextFlowStage });
+      catch (err) {
+        console.error('Error while advancing session flow', err);
+        alert('An error ocurred while saving session progress [Code 462-SAVE]');
+      }
+      finally {
+        advancing = false;
+      }
     });
 
     EventBus.$on('leticia-timeout', (detail) => {
+      if (advancing) return;
       alert(this.$i18n.t('error.timeout'));
 
       const sender = new ActionSender('Timeout');

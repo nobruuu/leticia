@@ -43,7 +43,7 @@ class ActionSenderService {
       username: this.username,
       type: isEnter ? 'PageEnter' : 'PageExit',
       source: this.senderId,
-      url: router.currentRoute.fullPath,
+      url: details.fullPath,
       clientTimestamp: Date.now(),
       details: details
     };
