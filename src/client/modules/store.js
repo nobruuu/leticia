@@ -1,5 +1,4 @@
-import Vue from 'vue';
-import Vuex from 'vuex';
+import { createStore } from 'vuex';
 import VuexPersistence from 'vuex-persist';
 import Axios from 'axios';
 
@@ -9,14 +8,12 @@ import { findIndexInArray, shuffleArray, deepCopy } from '../services/Utils';
 import { auth } from './auth';
 import Timer from '../services/Timer';
 
-Vue.use(Vuex);
-
 const vuexLocal = new VuexPersistence({
   key: 'leticia-vuex',
   storage: window.localStorage
 });
 
-const store = new Vuex.Store({
+const store = createStore({
   state: {
     timerTime: null,
     timerDuration: null,

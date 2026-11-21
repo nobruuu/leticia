@@ -1,8 +1,9 @@
-import Vue from 'vue';
+import './modules/compat';
+import { createApp } from 'vue';
 import BootstrapVue from 'bootstrap-vue';
-import VeeValidate from 'vee-validate';
+import legacyPlugins from './modules/legacyPlugins';
 import vSelect from 'vue-select';
-import VueI18n from 'vue-i18n';
+import { createI18n } from 'vue-i18n';
 import VueCookies from 'vue-cookies';
 
 import 'bootstrap/dist/css/bootstrap.css';
@@ -24,26 +25,21 @@ import * as Constants from './services/Constants';
 library.add(fas);
 library.add(fab);
 
-Vue.use(BootstrapVue);
-Vue.use(VueCookies);
-Vue.use(VueI18n);
-Vue.use(VeeValidate);
-
-Vue.component('font-awesome-icon', FontAwesomeIcon);
-Vue.component('v-select', vSelect);
-
-Vue.router = router;
-
-const i18n = new VueI18n({
+const i18n = createI18n({
+  legacy: true,
+  globalInjection: true,
   locale: Constants.locale,
   fallbackLocale: 'en',
   messages: translations
 });
 
-new Vue({
-  el: '#app',
-  router,
-  store,
-  i18n,
-  render: h => h(App)
-});
+const app = createApp(App);
+app.use(router);
+app.use(store);
+app.use(i18n);
+app.use(BootstrapVue);
+app.use(VueCookies);
+app.use(legacyPlugins);
+app.component('font-awesome-icon', FontAwesomeIcon);
+app.component('v-select', vSelect);
+app.mount('#app');

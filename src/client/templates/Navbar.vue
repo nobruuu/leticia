@@ -190,7 +190,7 @@ export default {
         action: 'Bookmark',
         task: this.currentTask,
         docId: this.currentDocument.docId_s,
-        url: this.$router.currentRoute.fullPath,
+        url: this.$router.currentRoute.value.fullPath,
         clientTimestamp: Date.now()
       };
 
@@ -210,7 +210,7 @@ export default {
         action: 'Unbookmark',
         task: this.currentTask,
         docId: this.currentDocument.docId_s,
-        url: this.$router.currentRoute.fullPath,
+        url: this.$router.currentRoute.value.fullPath,
         clientTimestamp: Date.now()
       };
 

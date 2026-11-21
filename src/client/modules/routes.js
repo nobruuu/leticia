@@ -1,7 +1,5 @@
-import Vue from 'vue';
-import VueRouter from 'vue-router';
+import { createRouter, createWebHistory } from 'vue-router';
 import Axios from 'axios';
-import VueAxios from 'vue-axios';
 
 import * as Constants from '../services/Constants';
 import EventBus from './eventBus';
@@ -44,15 +42,12 @@ import NotFound from '../templates/NotFound.vue';
 
 import PdfRender from '../templates/PdfRender.vue';
 
-Vue.use(VueRouter);
-Vue.use(VueAxios, Axios);
-
 Axios.defaults.baseURL = `${Constants.backendApiUrl}/`;
 
 let isFirstTransition = true;
 
-const router = new VueRouter({
-  mode: 'history',
+const router = createRouter({
+  history: createWebHistory(),
   routes: [
     {
       path: '/',
@@ -361,7 +356,7 @@ const router = new VueRouter({
     },
     // If route is not found
     {
-      path: '*',
+      path: '/:pathMatch(.*)*',
       name: 'not-found',
       component: NotFound,
       meta: {
@@ -394,7 +389,8 @@ router.beforeEach((to, from, next) => {
   isFirstTransition = false;
 });
 
-router.afterEach((to, from) => {
+router.afterEach((to, from, failure) => {
+  if (failure) return;
   const loggedIn = localStorage.getItem('leticia-user');
 
   if (loggedIn) {

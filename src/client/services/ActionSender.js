@@ -30,7 +30,7 @@ class ActionSenderService {
       username: this.username,
       type: 'TypingTestCompleted',
       source: this.senderId,
-      url: router.currentRoute.fullPath,
+      url: router.currentRoute.value.fullPath,
       clientTimestamp: Date.now(),
       details: textArray
     };
@@ -80,7 +80,7 @@ class ActionSenderService {
       username: this.username,
       type: isLogin ? 'Login' : 'Logout',
       source: 'UserLog',
-      url: router.currentRoute.fullPath,
+      url: router.currentRoute.value.fullPath,
       clientTimestamp: Date.now(),
       details: {
         // dgacitua: Remember to split by whitespace when processing
@@ -102,7 +102,7 @@ class ActionSenderService {
       ...mouseAction,
       username: this.username,
       source: this.senderId,
-      url: router.currentRoute.fullPath,
+      url: router.currentRoute.value.fullPath,
     };
 
     //console.log(message);
@@ -114,7 +114,7 @@ class ActionSenderService {
       ...scrollAction,
       username: this.username,
       source: this.senderId,
-      url: router.currentRoute.fullPath,
+      url: router.currentRoute.value.fullPath,
     };
 
     //console.log(message);
@@ -126,7 +126,7 @@ class ActionSenderService {
       username: originalMsg.username || this.username,
       type: originalMsg.type || 'GenericAction',
       source: originalMsg.source || this.senderId,
-      url: router.currentRoute.fullPath,
+      url: router.currentRoute.value.fullPath,
       clientTimestamp: Date.now(),
       details: originalMsg.details || {}
     };

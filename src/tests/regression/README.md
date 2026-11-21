@@ -188,10 +188,10 @@ Pruebas dirigidas con otra cuenta E2E si corresponde:
   helper contra un build real con sentinel inyectado y E2E manual. No se arrancó
   infraestructura ni se escribieron registros de la aplicación.
 
-## EventBus, determinismo de flujo y navegación (Vue 2)
+## EventBus, determinismo de flujo y navegación (Vue compat)
 
-`npm run test:flow` usa Node y los scripts reales de componentes Vue 2 con I/O
-controlada, sin Jest/Vitest ni escrituras API/Mongo. Comprueba sincronía/payload/orden
+`npm run test:flow` usa Node y los scripts reales de componentes Options API con I/O
+controlada y el renderer de Vue 3 compat, sin Jest/Vitest ni escrituras API/Mongo. Comprueba sincronía/payload/orden
 y `$off` del adaptador mitt, reemplazo del coordinador al reentrar, supervivencia
 tras destruir Challenge, índice 0, asignación persistida antes de navegar, tasks y
 flow conservados, rechazo de snapshots incompatibles, guardados lentos antes del
@@ -231,3 +231,49 @@ Opcionales: `FLOW_TEST_PLAYWRIGHT_MODULE` (ruta absoluta al módulo externo) y
 `FLOW_TEST_BASE_URL` (default `http://localhost:3000`). No instala herramientas ni cambia
 las dependencias del runtime LETICIA. Estas pruebas controladas complementan el
 smoke y `test:persistence` read-only; no sustituyen un estudio E2E con escrituras.
+
+
+## Montaje del frontend con compat
+
+El frontend usa Vue 3.5.45 y `@vue/compat` de la misma versión. Vite aliasa todos
+los imports `vue` a `@vue/compat`; tanto el compilador como el runtime usan modo 2
+explícito para conservar BootstrapVue 2/Bootstrap 4 y los componentes Options API.
+`client/modules/compat.js` centraliza el runtime sin silenciar advertencias.
+
+El bootstrap registra Router, Vuex, i18n, BootstrapVue, cookies y componentes
+mediante `createApp`. `legacyPlugins.js` adapta únicamente los instaladores de
+VeeValidate 2 (constructor interno y receptor de hooks con `_base`/VNode legacy)
+y vue-axios 2 (getters de prototipo). El adaptador no monta
+el root ni reemplaza reglas de validación. i18n usa `legacy: true` para conservar
+`$t`/`$i18n`, y los textos de traducción permanecen iguales.
+
+`test:flow` monta los scripts reales con un renderer sin DOM. Invoca sus hooks
+`mounted` de forma explícita para controlar promesas y utiliza `app.unmount()`
+para comprobar el lifecycle; conserva todos los escenarios y assertions de flujo.
+`frontend-bootstrap.mjs` comprueba el build real en Chromium: root, navbar,
+plugins, rutas iniciales/login/catch-all, traducciones y restore/escritura/recarga
+de Vuex en localStorage. Bloquea POST experimentales y exige cero escrituras.
+Usa Playwright externo con las mismas variables `FLOW_TEST_*` del browser test.
+
+Ejemplo con una imagen local que ya contenga Chromium/Playwright:
+
+```bash
+docker run --rm --pull=never --network container:leticia-webapp \
+  --mount "type=bind,source=$PWD/src/tests/regression/frontend-bootstrap.mjs,target=/tmp/frontend-bootstrap.mjs,readonly" \
+  --entrypoint node IMAGEN_LOCAL_CON_PLAYWRIGHT /tmp/frontend-bootstrap.mjs
+```
+
+Deuda temporal que no equivale a un error fatal de montaje:
+
+- Vue compat: render functions heredadas y `beforeDestroy`; se mantienen en modo 2.
+- Router: `currentRoute` es un ref; las lecturas imperativas usan `.value`.
+  El browser funcional anterior depende de introspección/constructores Vue 2 y
+  requiere adaptación antes de certificar todo el recorrido experimental.
+- BootstrapVue: se conserva su capa compat de render/slots/eventos y PortalVue 2.
+  El build advierte sobre anotaciones `PURE` de la librería.
+- i18n: el modo legacy está deprecado en v11; los componentes antiguos `<i18n>`
+  de interpolación permanecen pendientes de revisión funcional.
+- Tests: `node:vm` usa módulos experimentales; el renderer controlado no certifica
+  el DOM ni la interacción completa con los widgets retenidos.
+- Otros: CSS `>>>`/`/deep/` deprecado, bundles grandes, dependencias históricas.
+  El target legacy conservado no certifica soporte IE con Vue 3.

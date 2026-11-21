@@ -190,3 +190,20 @@ es-define-property, es-errors, es-object-atoms, get-proto, gopd, hasown,
 math-intrinsics y object-inspect. Desaparecen copias ya no utilizadas de call-bind
 y object-inspect. npm también normaliza metadatos license/dev/integrity en entradas
 sin cambio de versión; no es un upgrade de esas versiones.
+
+
+## Frontend con Vue compat
+
+El contrato de salida se conserva en `build/frontend`, servido por el mismo backend.
+La instalación limpia usa el `.npmrc` versionado (`legacy-peer-deps=true`): los
+plugins Vue 2 retenidos, como vue-select y Font Awesome, declaran rangos anteriores
+a Vue 3 aunque sus imports se ejecutan mediante el alias `@vue/compat`. Esto no
+certifica compatibilidad funcional completa de dichos plugins. No se usa `--force`.
+
+Vue, compat, Router, Vuex, i18n, Vite y plugin-vue quedan fijados a sus versiones
+objetivo. `@vitejs/plugin-legacy` se actualiza a 7.2.1 porque 3.0.1 exige Vite 4.
+Se mantienen sus targets/configuración; no se añade soporte de navegador nuevo.
+Al resolver el lockfile se fijaron temporalmente las otras dependencias directas
+a las versiones anteriores y se restauraron después sus rangos originales. Los
+cambios transitivos corresponden al compilador/runtime, Router (que incorpora su
+tooling), Vite/Rollup/esbuild y plugin-legacy/Babel/core-js. No se instaló Pinia.

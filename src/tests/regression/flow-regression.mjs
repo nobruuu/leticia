@@ -1,9 +1,9 @@
-// No API/Mongo writes. Exercise the actual Vue 2 component scripts with controlled IO.
+// No API/Mongo writes. Exercise the actual Vue compat component scripts with controlled IO.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { SourceTextModule, SyntheticModule } from 'node:vm';
-import Vue from 'vue';
+import CompatVue from '@vue/compat';
 import lodash from 'lodash';
 import EventBus from '../../client/modules/eventBus.js';
 import * as coordinator from '../../client/modules/challengeCoordinator.js';
@@ -52,12 +52,32 @@ async function component(name) {
   await module.evaluate();
   return module.namespace.default;
 }
+// Mount actual Options API instances in Vue 3 without a browser or DOM mocks.
+const { createRenderer, configureCompat } = CompatVue;
+configureCompat({ MODE: 2 });
+const renderer = createRenderer({
+  createElement: () => ({ children: [] }),
+  createText: text => ({ text }), createComment: text => ({ text }),
+  setText: (node, text) => { node.text = text; },
+  setElementText: (node, text) => { node.text = text; },
+  parentNode: node => node.parent, nextSibling: () => null,
+  patchProp: () => {},
+  insert(node, parent) { node.parent = parent; parent.children.push(node); },
+  remove(node) { node.parent.children.splice(node.parent.children.indexOf(node), 1); }
+});
+const applications = new WeakMap();
 function instance(options, store, router = { replace: async () => {} }) {
-  return new Vue({ ...options, beforeCreate() {
-    this.$store = store; this.$router = router; this.$route = { query: {} };
-    this.$i18n = { t: x => x };
-  } });
+  // Tests invoke the real mounted hook explicitly so deferred IO stays controlled.
+  const { mounted, ...controlled } = options;
+  const app = renderer.createApp({ ...controlled, render: () => null });
+  Object.assign(app.config.globalProperties, {
+    $store: store, $router: router, $route: { query: {} }, $i18n: { t: x => x }
+  });
+  const vm = app.mount({ children: [] });
+  applications.set(vm, app);
+  return vm;
 }
+function destroy(vm) { applications.get(vm).unmount(); }
 const flow = { sessionFlowId: 'saved', stages: [
   { path: '/challenge', stages: [{ path: '/ready-ex', query: {} }, { path: '/search', query: {} }] },
   { path: '/end' }
@@ -110,7 +130,7 @@ await check('Initial assignment persists stageIndex 0/tasks/stages/flow before n
   assert.deepEqual(requests.at(-1).state.tasks.map(t => t.searchTaskId), ['task02', 'task01']);
   assert.equal(requests.at(-1).sessionFlow.sessionFlowId, 'saved');
   saved.resolve(); await mounting;
-  assert.equal(navigation[0].query.task, 'task02'); vm.$destroy();
+  assert.equal(navigation[0].query.task, 'task02'); destroy(vm);
   // Destroying Challenge must leave its coordinator available for sibling routes.
   EventBus.$emit('leticia-next-challenge'); await tick(); await coordinator.stopChallengeCoordinator();
   assert.equal(s.state.stageIndex, 1);
@@ -124,12 +144,12 @@ await check('Restore/reentry preserves index 0, task order and session flow with
   vm.sessionFlow = s.state.sessionFlow; vm.createStages();
   const expected = clone(s.state.stages);
   for (let i = 0; i < 3; i++) {
-    await Challenge.mounted.call(vm); vm.$destroy();
+    await Challenge.mounted.call(vm); destroy(vm);
     vm = instance(Challenge, s, { replace: async r => navigation.push(clone(r)) });
   }
   assert.deepEqual(clone(s.state.stages), expected); assert.equal(navigation.length, 3);
   EventBus.$emit('leticia-next-challenge'); await tick(); await coordinator.stopChallengeCoordinator();
-  assert.equal(s.state.stageIndex, 1); vm.$destroy();
+  assert.equal(s.state.stageIndex, 1); destroy(vm);
 });
 
 await check('Mismatch/partial snapshot stops resume without shuffle or navigation', async () => {
@@ -138,7 +158,7 @@ await check('Mismatch/partial snapshot stops resume without shuffle or navigatio
     s.state.stageIndex = partial ? null : 0; s.state.stages = [{ path: '/incompatible' }];
     const vm = instance(Challenge, s, { replace: () => assert.fail('Invalid resume navigated') });
     const before = alerts.length; await Challenge.mounted.call(vm);
-    assert.equal(alerts.length, before + 1); vm.$destroy(); await coordinator.stopChallengeCoordinator();
+    assert.equal(alerts.length, before + 1); destroy(vm); await coordinator.stopChallengeCoordinator();
   }
 });
 
@@ -166,7 +186,7 @@ await check('Snapshots: slow internal write settles before global write; latest 
   wait.resolve(); await tick(); await tick();
   assert.equal(writes.length, 2); assert.equal(persisted.state.flowIndex, 1);
   assert.equal(persisted.state.stageIndex, 1); assert.equal(navigation.at(-1).path, '/end');
-  vm.$destroy(); EventBus.$off('leticia-next-stage'); EventBus.$off('leticia-timeout');
+  destroy(vm); EventBus.$off('leticia-next-stage'); EventBus.$off('leticia-timeout');
 });
 
 await check('Failed snapshot blocks navigation and restores previous stage index', async () => {
@@ -175,7 +195,7 @@ await check('Failed snapshot blocks navigation and restores previous stage index
   vm.sessionFlow = flow; vm.createStages();
   post = async () => { throw new Error('Expected failed write'); };
   EventBus.$emit('leticia-next-challenge'); await tick(); await coordinator.stopChallengeCoordinator();
-  assert.equal(s.state.stageIndex, 0); vm.$destroy();
+  assert.equal(s.state.stageIndex, 0); destroy(vm);
 });
 
 await check('Document click stores selection before Router navigation; no params.doc', async () => {
@@ -201,7 +221,7 @@ await check('DisplayPage only accepts selected document matching query.id; inval
     vm.$route.query.id = id; vm.visitPage(); assert.equal(vm.renderPage, false); assert.equal(vm.pageUrl, '');
   }
   s.state.lastVisitedDoc = null; vm.$route.query.id = 'doc01'; vm.visitPage(); assert.equal(vm.renderPage, false);
-  vm.$destroy();
+  destroy(vm);
 });
 
 await check('UserHub saves once before starting timer/navigation on repeated resume clicks', async () => {
@@ -216,13 +236,13 @@ await check('UserHub saves once before starting timer/navigation on repeated res
   assert.equal(saves, 1); assert.equal(timers, 0); assert.equal(navigations, 0);
   wait.resolve(); await pending;
   assert.equal(timers, 1); assert.equal(navigations, 1);
-  EventBus.$off('leticia-timer-create', handler); vm.$destroy();
+  EventBus.$off('leticia-timer-create', handler); destroy(vm);
 });
 
 await check('Navbar timer creation stops previous instance', async () => {
   const Navbar = await component('Navbar'), vm = instance(Navbar, store());
   for (let i = 0; i < 4; i++) EventBus.$emit('leticia-timer-create', { totalTime: 60 });
   assert.equal(FakeTimer.active, 1); EventBus.$emit('leticia-timer-stop'); assert.equal(FakeTimer.active, 0);
-  vm.$destroy();
+  destroy(vm);
 });
 console.log('Flow directed component checks passed (controlled IO, no database writes).');
