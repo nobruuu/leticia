@@ -103,6 +103,27 @@ archivo; al sustituir la imagen se conservan sus variables. CURRENT_SESSION_FLOW
 VITE_CURRENT_SESSION_FLOW sigue incorporándose al bundle. Este bloque no cambia
 su selección ni sus valores, y no unifica ambos mecanismos.
 
+### Configuración privada futura
+
+`server/constants.js` centraliza, mediante dotenv/process.env, `LLM_API_KEY` y
+`LLM_API_BASE_URL`. Son opcionales y su default es vacío: no habilitan ninguna API,
+proveedor o endpoint. Inyectar sus valores únicamente en el runtime backend, mediante
+el entorno del contenedor o su archivo runtime privado externo al checkout.
+
+Nunca usar nombres `VITE_*` para credenciales: esos valores son públicos y pueden
+quedar incorporados al bundle. El snapshot excluye archivos dotenv privados; el
+builder sólo recibe las variables VITE_* admitidas por `workspace-snapshot.py`.
+BUILD_INFO registra esa configuración pública, no el entorno completo. El reporte
+de arranque enumera campos concretos y no imprime estas variables privadas.
+No registrar/exportar el objeto completo de configuración ni enviar secretos por API.
+Los placeholders de `.env.example` deben permanecer vacíos, sin valores reales.
+
+Para comprobar aislamiento usar sólo un sentinel ficticio en un runtime de prueba
+del mismo build. Confirmar arranque y lectura backend sin imprimir el valor; ejecutar
+`test:secrets` contra `build/frontend` y comprobar también ausencia en BUILD_INFO,
+snapshot y logs. La prueba no requiere reconstruir con la clave ni modificar el
+frontend. La comprobación de ausencia por sí sola no demuestra recepción backend.
+
 ## Evidencia y comprobación
 
 `/work/build/BUILD_INFO.json` registra revisión/rama, cambios locales, hashes de cada
@@ -136,3 +157,36 @@ El Dockerfile/Compose histórico sigue siendo otro flujo basado en `/app` y
 La copia histórica hacia `/work`
 no tenía un procedimiento versionado verificable. El flujo anterior se conserva
 como referencia, no como evidencia de este nuevo procedimiento.
+
+## Actualización acotada de Express 4.22.2
+
+Express queda fijado a `4.22.2`. Se conservaron los rangos originales y las versiones
+resueltas de todas las demás dependencias directas, incluido `body-parser` 1.20.1.
+Para evitar una deduplicación que actualizaba ese parser directo, se resolvió el
+lockfile en un directorio aislado fijando temporalmente las versiones directas,
+y después se restauraron sus especificadores originales (salvo Express).
+El checkout final se valida con `npm ci`, sin esa fijación temporal.
+
+Cambios principales en el grafo transitivo requerido por Express:
+
+| Paquete | Antes | Después |
+|---|---|---|
+| body-parser de Express | Compartido con 1.20.1 | 1.20.9 anidado; el directo sigue 1.20.1 |
+| qs de Express | 6.11.0 | 6.15.4; el parser anidado usa 6.16.2 |
+| cookie de Express | 0.5.0 | 0.7.2 |
+| encodeurl | 1.0.2 | 2.0.3 |
+| finalhandler | 1.2.0 | 1.3.2 |
+| merge-descriptors | 1.0.1 | 1.0.3 |
+| path-to-regexp | 0.1.7 | 0.1.13 |
+| send / serve-static | 0.18.0 / 1.15.0 | 0.19.2 / 1.16.3 |
+| content-type | 1.0.4 | 1.0.5 |
+| http-errors / statuses | Copias existentes | Nuevas copias anidadas 2.0.1 / 2.0.2 |
+| raw-body de Express | Compartido con 2.5.1 | 2.5.3 anidado |
+| side-channel | 1.0.4 | 1.1.1 y submódulos list/map/weakmap |
+
+El soporte de qs/side-channel actualiza function-bind (1.1.2), get-intrinsic (1.3.0)
+y has-symbols (1.1.0); incorpora call-bind-apply-helpers, call-bound, dunder-proto,
+es-define-property, es-errors, es-object-atoms, get-proto, gopd, hasown,
+math-intrinsics y object-inspect. Desaparecen copias ya no utilizadas de call-bind
+y object-inspect. npm también normaliza metadatos license/dev/integrity en entradas
+sin cambio de versión; no es un upgrade de esas versiones.

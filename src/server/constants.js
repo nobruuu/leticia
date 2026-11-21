@@ -35,6 +35,11 @@ export const facebookClientId = process.env.FACEBOOK_CLIENT_ID || '';
 export const facebookClientSecret = process.env.FACEBOOK_CLIENT_SECRET || '';
 export const currentSessionFlow = process.env.CURRENT_SESSION_FLOW || 'short';
 
+// Optional backend runtime configuration. Never expose these through VITE_* or logs.
+// No provider or external API is enabled by defining these values.
+export const llmApiKey = process.env.LLM_API_KEY || '';
+export const llmApiBaseUrl = process.env.LLM_API_BASE_URL || '';
+
 export const enableFrontend = (!(!!process.env.ENABLE_FRONTEND) || process.env.ENABLE_FRONTEND === 'true');
 export const enableApiDocs = (!(!!process.env.ENABLE_API_DOCS) || process.env.ENABLE_API_DOCS === 'true');
 
