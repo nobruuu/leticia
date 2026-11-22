@@ -1,7 +1,7 @@
 <template>
-  <b-container id="home" class="full-height">
-    <b-row class="text-center">
-      <b-col>
+  <BvnContainer id="home" class="full-height">
+    <BvnRow class="text-center">
+      <BvnCol>
         <b-carousel
           id="carousel-header"
           background="#ababab"
@@ -14,11 +14,11 @@
             <h5><i>{{ $t("home.subtitle") }}</i></h5>
           </b-carousel-slide>
         </b-carousel>
-      </b-col>
-    </b-row>
+      </BvnCol>
+    </BvnRow>
     <br>
-    <b-row>
-      <b-col>
+    <BvnRow>
+      <BvnCol>
         <div>
           <b>{{ $t("home.considerations") }}:</b>
         </div>
@@ -31,24 +31,24 @@
           <li>{{ $t("home.considerationsText[5]") }}</li>
           <li>{{ $t("home.considerationsText[6]") }}</li>
         </ul>
-      </b-col>
-    </b-row>
+      </BvnCol>
+    </BvnRow>
     <br>
-    <b-row>
-      <b-col>
+    <BvnRow>
+      <BvnCol>
         <BvnAlert show variant="secondary">
           <b>{{ $t("home.troubleshootingText[0]") }}</b> {{ $t("home.troubleshootingText[1]") }}
         </BvnAlert>
-      </b-col>
-    </b-row>
+      </BvnCol>
+    </BvnRow>
     <br>
-    <b-row class="text-center" align-v="center">
-      <b-col>
-        <b-row align-h="center">
+    <BvnRow class="text-center" align-v="center">
+      <BvnCol>
+        <BvnRow align-h="center">
           <b-button-group>
             <b-button to="oauth" variant="info">{{ $t("home.participate") }}</b-button>
           </b-button-group>
-        </b-row>
+        </BvnRow>
         <br>
         <!--
         <b-row align-h="center">
@@ -57,13 +57,18 @@
           </b-button-group>
         </b-row>
         -->
-      </b-col>
-    </b-row>
-  </b-container>
+      </BvnCol>
+    </BvnRow>
+  </BvnContainer>
 </template>
 
 <script>
 import { BAlert as BvnAlert } from 'bootstrap-vue-next/components/BAlert';
+import {
+  BContainer as BvnContainer,
+  BRow as BvnRow,
+  BCol as BvnCol
+} from 'bootstrap-vue-next/components/BContainer';
 import ActionSender from '../services/ActionSender';
 
 import HeaderImage from '../assets/image01.jpg';
@@ -71,7 +76,7 @@ import HeaderImage from '../assets/image01.jpg';
 export default {
   name: 'home',
 
-  components: { BvnAlert },
+  components: { BvnAlert, BvnContainer, BvnRow, BvnCol },
 
   data() {
     return {
