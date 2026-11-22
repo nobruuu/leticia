@@ -36,9 +36,9 @@
     <br>
     <b-row>
       <b-col>
-        <b-alert show variant="secondary">
+        <BvnAlert show variant="secondary">
           <b>{{ $t("home.troubleshootingText[0]") }}</b> {{ $t("home.troubleshootingText[1]") }}
-        </b-alert>
+        </BvnAlert>
       </b-col>
     </b-row>
     <br>
@@ -63,12 +63,15 @@
 </template>
 
 <script>
+import { BAlert as BvnAlert } from 'bootstrap-vue-next/components/BAlert';
 import ActionSender from '../services/ActionSender';
 
 import HeaderImage from '../assets/image01.jpg';
 
 export default {
   name: 'home',
+
+  components: { BvnAlert },
 
   data() {
     return {
