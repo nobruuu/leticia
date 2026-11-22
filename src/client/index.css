@@ -6,6 +6,8 @@ html, body {
 }
 
 #app {
+  /* Vue 3 retains this mount container; preserve the existing full-height layout. */
+  height: 100%;
   margin: 0px;
 }
 

@@ -9,9 +9,9 @@
         {{ $t("userHub.completedPerc") }}:
         <b-progress :max="100" height="2rem">
           <b-progress-bar :value="completedPerc">
-            <i18n path="userHub.completedBar" tag="span">
+            <i18n-t keypath="userHub.completedBar" tag="span">
               <strong>{{ completedPerc }}%</strong>
-            </i18n>
+            </i18n-t>
           </b-progress-bar>
         </b-progress>
       </b-col>

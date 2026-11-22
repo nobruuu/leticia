@@ -1,10 +1,13 @@
 // Optional browser companion. Playwright comes from an external validation image,
 // never from the application dependency tree. All experimental writes are mocked.
 import assert from 'node:assert/strict';
+import { installRuntimeHelpers, assertResourceErrors } from './browser-runtime.mjs';
+import { runUserFlow } from './user-flow-browser.mjs';
 const { chromium } = await import(process.env.FLOW_TEST_PLAYWRIGHT_MODULE || '/workspace/node_modules/playwright/index.mjs');
 const base = process.env.FLOW_TEST_BASE_URL || 'http://localhost:3000';
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
 const context = await browser.newContext();
+await installRuntimeHelpers(context);
 const page = await context.newPage();
 const devtools = await context.newCDPSession(page);
 const executionContexts = new Map();
@@ -12,9 +15,28 @@ devtools.on('Runtime.executionContextCreated', ({ context }) => executionContext
 devtools.on('Runtime.executionContextDestroyed', ({ executionContextId }) => executionContexts.delete(executionContextId));
 devtools.on('Runtime.executionContextsCleared', () => executionContexts.clear());
 await devtools.send('Runtime.enable');
-const errors = [], dialogs = [], writes = [];
+const errors = [], dialogs = [], writes = [], warnings = [], expectedSaveErrors = [], expectedSaveDialogs = [], resourceErrors = [];
+let expectSaveFailure = false, failNextSnapshot = false;
+page.on('console', async message => {
+  if (message.type() === 'warning') warnings.push(message.text());
+  if (message.type() === 'error') {
+    const text = message.text();
+    if (text.startsWith('Failed to load resource:')) resourceErrors.push(`${text} ${JSON.stringify(message.location())}`);
+    else if (expectSaveFailure && /Error while saving UserData|status code 503/.test(text)) expectedSaveErrors.push(text);
+    else {
+      const expected = expectSaveFailure;
+      const details = await Promise.all(message.args().map(arg => arg.evaluate(value => ({ status: value?.response?.status, url: value?.config?.url })).catch(() => ({}))));
+      if (expected && details.some(value => value.status === 503 && value.url?.includes('/userdata/'))) expectedSaveErrors.push(text);
+      else errors.push(text);
+    }
+  }
+});
 page.on('pageerror', e => errors.push(e.message));
-page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.dismiss(); });
+page.on('dialog', async dialog => {
+  if (expectSaveFailure && dialog.message().includes('[Code 462-SAVE]')) expectedSaveDialogs.push(dialog.message());
+  else dialogs.push(dialog.message());
+  await dialog.dismiss();
+});
 const flow = await context.request.get(`${base}/v1/flows/flow1`).then(r => r.json());
 const tasks = await context.request.get(`${base}/v1/tasks`).then(r => r.json());
 assert(Array.isArray(tasks) && tasks.length >= 2);
@@ -33,6 +55,10 @@ await context.route('**/v1/**', async route => {
     const body = request.postDataJSON();
     writes.push({ path, body });
     if (path.startsWith('/v1/userdata/')) {
+      if (failNextSnapshot) {
+        failNextSnapshot = false;
+        return route.fulfill({ status: 503, json: { message: 'Expected regression save failure' } });
+      }
       await pendingSnapshot;
       latestSnapshot = body;
     }
@@ -70,9 +96,9 @@ await context.addInitScript(({ flow }) => {
     trackers: ['mousemove', 'click', 'scroll'].map(type => handlers.get(type)?.size || 0) });
 }, { flow });
 async function navigate(path) {
-  await page.evaluate(async path => { await document.getElementById('leticia-app').__vue__.$router.push(path); }, path);
+  await page.evaluate(async path => { await window.flowTestRuntime.globals().$router.push(path); }, path);
 }
-async function state() { return page.evaluate(() => JSON.parse(JSON.stringify(document.getElementById('leticia-app').__vue__.$store.state))); }
+async function state() { return page.evaluate(() => JSON.parse(JSON.stringify(window.flowTestRuntime.globals().$store.state))); }
 async function settled() { await page.waitForTimeout(150); }
 const trackerTypes = ['mousemove', 'click', 'scroll'];
 async function iframeTrackers(objectId) {
@@ -82,7 +108,7 @@ async function iframeTrackers(objectId) {
 
 try {
   await page.goto(`${base}/challenge`);
-  await page.waitForFunction(() => document.getElementById('leticia-app')?.__vue__?.$store.state.stageIndex === 0);
+  await page.waitForFunction(() => window.flowTestRuntime?.app()?.config.globalProperties.$store.state.stageIndex === 0);
   assert.equal(new URL(page.url()).pathname, '/challenge', 'Navigation preceded initial snapshot');
   assert.equal(writes.filter(w => w.path.startsWith('/v1/userdata/')).length, 1);
   releaseSnapshot(); pendingSnapshot = Promise.resolve();
@@ -91,7 +117,7 @@ try {
   const initial = await state(), order = initial.tasks.map(t => t.searchTaskId);
   assert.deepEqual(order, assigned.map(t => t.searchTaskId));
   assert.equal(latestSnapshot.state.stageIndex, 0);
-  console.log('OK Browser: assignment snapshot precedes navigation; actual Vue 2 mounted');
+  console.log('OK Browser: assignment snapshot precedes navigation; actual Vue 3 compat mounted');
 
   await page.reload(); await page.waitForURL('**/ready?task=*');
   for (let i = 0; i < 3; i++) {
@@ -100,15 +126,30 @@ try {
     await page.waitForURL('**/ready?task=*');
   }
   assert.equal(shuffles, 1); assert.deepEqual((await state()).tasks.map(t => t.searchTaskId), order);
+  // A failed write must roll back and leave the current route/snapshot intact.
+  expectSaveFailure = true; failNextSnapshot = true;
+  const savedBeforeFailure = JSON.parse(JSON.stringify(latestSnapshot));
   await page.locator('#leticia-content .btn-success').click();
+  await page.waitForFunction(() => window.flowTestRuntime.globals().$store.state.stageIndex === 0);
+  await settled();
+  assert.equal(expectedSaveDialogs.length, 1); assert(expectedSaveErrors.length >= 1);
+  assert.equal(new URL(page.url()).pathname, '/ready'); assert.deepEqual(latestSnapshot, savedBeforeFailure);
+  expectSaveFailure = false;
+  const beforeAdvance = writes.filter(w => w.path.startsWith('/v1/userdata/')).length;
+  pendingSnapshot = new Promise(resolve => { releaseSnapshot = resolve; });
+  await page.locator('#leticia-content .btn-success').dblclick(); await settled();
+  assert.equal(new URL(page.url()).pathname, '/ready'); assert.equal((await state()).stageIndex, 1);
+  assert.equal(writes.filter(w => w.path.startsWith('/v1/userdata/')).length, beforeAdvance + 1);
+  releaseSnapshot(); pendingSnapshot = Promise.resolve();
   await page.waitForURL('**/description?task=*'); await settled();
+  console.log('OK Browser: failed save rolls back without navigation; pending save prevents double advance');
   assert.equal((await state()).stageIndex, 1);
   assert.equal(latestSnapshot.state.stageIndex, 1);
   console.log('OK Browser: reload/reentry keeps task order and index 0; one click advances once');
 
   const timer = await page.evaluate(() => {
-    const a = document.getElementById('leticia-app').__vue__;
-    const nav = a.$children.find(c => c.$options.name === 'navbar');
+    const a = window.flowTestRuntime.root();
+    const nav = window.flowTestRuntime.component('navbar');
     window.flowTestTimer = nav.timer;
     return a.$store.state.timerTime;
   });
@@ -124,12 +165,20 @@ try {
     const docId = new URL(href, base).searchParams.get('id');
     await page.locator('.result-title').first().click(); await page.waitForURL('**/page?id=*');
     await page.locator('#page-iframe').waitFor();
-    await page.frame({ name: 'page-iframe' }).waitForLoadState('load');
+    await page.frameLocator('#page-iframe').locator('body').waitFor();
+    const frame = await page.locator('#page-iframe').elementHandle().then(element => element.contentFrame());
+    assert(frame, 'Missing attached document frame');
+    await frame.waitForLoadState('load');
+    const frameLayout = await page.locator('#page-iframe').evaluate(element => ({
+      height: element.getBoundingClientRect().height,
+      available: window.innerHeight - document.querySelector('nav.navbar').getBoundingClientRect().height
+    }));
+    assert(frameLayout.height >= frameLayout.available - 20, 'Document iframe lost the full-height layout');
     await settled();
     // Resolve window in the iframe's own realm. Inspecting the parent's
     // contentWindow WindowProxy does not reveal these native listeners.
     const { frameTree } = await devtools.send('Page.getFrameTree');
-    const iframe = frameTree.childFrames.find(child => child.frame.name === 'page-iframe');
+    const iframe = frameTree.childFrames.find(child => child.frame.url === frame.url());
     const realm = [...executionContexts.values()].find(c =>
       c.auxData?.frameId === iframe?.frame.id && c.auxData?.isDefault);
     assert(realm, 'Missing iframe execution context');
@@ -156,7 +205,7 @@ try {
     const current = await state(); assert.equal(current.lastVisitedDoc.docId_s, docId);
     const iframeSrc = await page.locator('#page-iframe').getAttribute('src');
     assert(iframeSrc.endsWith(current.lastVisitedDoc.path_s));
-    assert.equal(await page.evaluate(() => Object.keys(document.getElementById('leticia-app').__vue__.$router.currentRoute.params).length), 0);
+    assert.equal(await page.evaluate(() => Object.keys(window.flowTestRuntime.globals().$router.currentRoute.value.params).length), 0);
     const enter = writes.slice(before).filter(w => w.body.type === 'PageEnter');
     assert.equal(enter.length, 1); assert.equal(enter[0].body.url, new URL(page.url()).pathname + new URL(page.url()).search);
     const click = writes.slice(before).filter(w => w.body.type === 'SearchResultClick');
@@ -174,7 +223,7 @@ try {
     console.log(`OK Browser: iframe cycle ${i + 1}: native mousemove/click/scroll = 1/1/1; after back no live iframe realm`);
   }
   const afterTimer = await page.evaluate(() => {
-    const a = document.getElementById('leticia-app').__vue__, nav = a.$children.find(c => c.$options.name === 'navbar');
+    const a = window.flowTestRuntime.root(), nav = window.flowTestRuntime.component('navbar');
     return { same: nav.timer === window.flowTestTimer, remaining: a.$store.state.timerTime };
   });
   assert(afterTimer.same); assert(afterTimer.remaining <= timer && afterTimer.remaining > timer - 30);
@@ -193,12 +242,13 @@ try {
   assert.equal((await state()).lastVisitedDoc.docId_s === 'regression-mismatch', false);
   await page.reload(); await settled(); assert.equal(await page.locator('#page-iframe').count(), 0);
   console.log('OK Browser: mismatch/reload fails visibly without displaying another document');
-  // Compare both real Search templates with the previous BLink/Router 3 policy.
-  // An ancestor records defaultPrevented, then cancels the browser default solely
-  // to keep modifier-click checks from opening new pages during the test.
+  // Exercise both actual Search templates in isolated Vue 3 apps. A native
+  // anchor encodes Router 3's prior click contract as the reference. The current
+  // variant uses the real component/template; its router spy records SPA calls
+  // without leaving the test mount. Main-route/back coverage above uses Router 5.
   const clickPolicies = await page.evaluate(async () => {
-    const app = document.getElementById('leticia-app').__vue__;
-    const Vue = app.$options._base, Router = app.$router.constructor;
+    const runtime = window.flowTestRuntime, main = runtime.app(), root = runtime.root();
+    const Vue = runtime.vue();
     const cases = [
       { name: 'normal', type: 'click', button: 0 },
       { name: 'Ctrl', type: 'click', button: 0, ctrlKey: true },
@@ -206,49 +256,82 @@ try {
       { name: 'Shift', type: 'click', button: 0, shiftKey: true },
       { name: 'middle', type: 'auxclick', button: 1 }
     ];
-    const results = [];
+    const results = [], searchChecks = [];
     for (const path of ['/search', '/extended-challenge/search']) {
-      const config = path === '/search'
-        ? app.$router.options.routes.find(r => r.path === path)
-        : app.$router.options.routes.find(r => r.path === '/extended-challenge').children.find(r => r.path === 'search');
-      const options = config.component.options || config.component;
-      for (const variant of ['previous', 'current']) {
-        for (const click of cases) {
-          const router = new Router({ mode: 'abstract', routes: [
-            { path: '/source' }, { name: 'page', path: '/page' }
-          ] });
-          await router.push('/source');
-          let logs = 0, prevented;
-          const doc = app.$store.state.lastVisitedDoc;
-          const container = document.createElement('div');
-          for (const type of ['click', 'auxclick']) container.addEventListener(type, event => {
-            prevented = event.defaultPrevented;
-            event.preventDefault();
+      const config = runtime.globals().$router.getRoutes().find(r => r.path === path);
+      const options = config.components.default.options || config.components.default;
+      for (const variant of ['previous', 'current']) for (const click of cases) {
+        const route = Vue.reactive({ path: '/source', query: {}, fullPath: '/source' });
+        const router = {
+          currentRoute: { value: route }, resolve: location => runtime.globals().$router.resolve(location),
+          push: async location => { Object.assign(route, runtime.globals().$router.resolve(location)); }
+        };
+        let logs = 0, prevented;
+        const doc = root.$store.state.lastVisitedDoc;
+        const container = document.createElement('div');
+        for (const type of ['click', 'auxclick']) container.addEventListener(type, event => {
+          prevented = event.defaultPrevented; event.preventDefault();
+        });
+        document.body.appendChild(container);
+        let leaf, vm;
+        if (variant === 'previous') {
+          leaf = document.createElement('a'); leaf.href = router.resolve({ name: 'page', query: { id: doc.docId_s } }).href;
+          leaf.textContent = 'reference link'; container.appendChild(leaf);
+          leaf.addEventListener('click', event => {
+            logs++;
+            if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.defaultPrevented || event.button !== 0) return;
+            event.preventDefault(); router.push({ name: 'page', query: { id: doc.docId_s } });
           });
-          document.body.appendChild(container);
-          const vm = variant === 'previous' ? new Vue({ router, render: h => h('b-link', {
-            props: { to: { name: 'page', query: { id: doc.docId_s } } },
-            on: { click: () => logs++, auxclick: event => { event.preventDefault(); event.stopPropagation(); prevented = true; } }
-          }, 'previous link') }) : new Vue({ ...options, router, store: app.$store, i18n: app.$i18n });
-          vm.$mount(); container.appendChild(vm.$el);
-          if (variant === 'current') {
-            vm.sender = { sendGenericAction: async () => { logs++; return { data: {} }; } };
-            vm.searchResults = [doc]; vm.serpStatus = 'results'; vm.displayFullSearch = false;
+          leaf.addEventListener('auxclick', event => { event.preventDefault(); event.stopPropagation(); prevented = true; });
+        } else {
+          leaf = Vue.createApp(options);
+          for (const name of ['BContainer', 'BRow', 'BCol', 'BImg', 'BInputGroup', 'BFormInput', 'BButton', 'BLink', 'BPagination', 'font-awesome-icon']) {
+            leaf.component(name, main.component(name));
           }
-          await Vue.nextTick();
-          const link = variant === 'previous' ? vm.$el : vm.$el.querySelector('.result-title');
-          const event = new MouseEvent(click.type, { ...click, bubbles: true, cancelable: true });
-          link.dispatchEvent(event);
-          results.push({ path, variant, click: click.name,
-            spa: router.currentRoute.path === '/page', prevented: prevented ?? event.defaultPrevented, logs });
-          vm.$destroy(); container.remove();
+          Object.assign(leaf.config.globalProperties, {
+            $store: root.$store, $router: router, $route: route,
+            $t: root.$t.bind(root), $i18n: root.$i18n
+          });
+          vm = leaf.mount(container);
+          const actions = [];
+          vm.sender.sendGenericAction = async action => { logs++; actions.push(action); return { data: {} }; };
+          if (click.name === 'normal') {
+            // Real search on each retained template. The corpus has five hits,
+            // so expose page two with a test-only total to exercise pagination.
+            const waitForSearch = async () => {
+              const until = Date.now() + 5000;
+              while (vm.serpStatus === 'loading' && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 20));
+              if (vm.serpStatus === 'loading') throw new Error(`Search did not settle: ${path}`);
+              await Vue.nextTick();
+            };
+            vm.query = 'javascript'; vm.searchQuery(); await waitForSearch();
+            const found = { total: vm.numResults, rendered: container.querySelectorAll('.result-title').length };
+            vm.numResults = 25; await Vue.nextTick();
+            const second = container.querySelector('button[aria-label="Go to page 2"]');
+            if (!second) throw new Error(`Missing pagination control: ${path}`);
+            second.click(); await Vue.nextTick(); await waitForSearch();
+            searchChecks.push({ path, ...found, page: Number(route.query.p), paginationActions: actions.filter(a => a.type === 'Pagination').length });
+            vm.query = ''; Object.assign(route, { path: '/source', query: {}, fullPath: '/source' });
+            await Vue.nextTick(); logs = 0;
+          }
+          vm.searchResults = [doc]; vm.serpStatus = 'results'; vm.displayFullSearch = false;
         }
+        await Vue.nextTick();
+        const link = variant === 'previous' ? leaf : container.querySelector('.result-title');
+        const event = new MouseEvent(click.type, { ...click, bubbles: true, cancelable: true });
+        link.dispatchEvent(event); await Vue.nextTick();
+        results.push({ path, variant, click: click.name, spa: route.path === '/page', prevented: prevented ?? event.defaultPrevented, logs });
+        if (variant === 'current') leaf.unmount();
+        container.remove();
       }
     }
-    return results;
+    return { results, searchChecks };
   });
-  for (const current of clickPolicies.filter(r => r.variant === 'current')) {
-    const previous = clickPolicies.find(r => r.variant === 'previous' && r.path === current.path && r.click === current.click);
+  for (const search of clickPolicies.searchChecks) {
+    assert.deepEqual({ total: search.total, rendered: search.rendered, page: search.page, paginationActions: search.paginationActions }, { total: 5, rendered: 5, page: 2, paginationActions: 1 }, search.path);
+  }
+  for (const current of clickPolicies.results.filter(r => r.variant === 'current')) {
+    const previous = clickPolicies.results.find(r => r.variant === 'previous' && r.path === current.path && r.click === current.click);
     const policy = ({ spa, prevented, logs }) => ({ spa, prevented, logs });
     assert.deepEqual(policy(current), policy(previous), `${current.path}: ${current.click} changed navigation policy`);
     assert.deepEqual(policy(current), current.click === 'normal'
@@ -256,8 +339,24 @@ try {
       : current.click === 'middle' ? { spa: false, prevented: true, logs: 0 }
       : { spa: false, prevented: false, logs: 1 });
   }
+  console.log('OK Browser: both Search templates execute real search, render five results and paginate with one action');
   console.log('OK Browser: both Search templates preserve normal/Ctrl/Cmd/Shift/middle click policy against previous BLink/Router 3');
 
-  assert.deepEqual(errors, []); assert.deepEqual(dialogs, []);
+  await navigate('/typing');
+  assert.match(await page.locator('.progress').innerText(), /0%\s*completed/);
+  await page.locator('#leticia-content input').fill(await page.locator('#sample-text').innerText());
+  await page.locator('#leticia-content .btn-primary').click();
+  assert.match(await page.locator('.progress').innerText(), /33%\s*completed/);
+  assert.equal(await page.evaluate(() => window.flowTestRuntime.component('typing-test').sampleIndex), 1);
+  console.log('OK Browser: TypingTest translated progress updates with real input and Next control');
+
+  await runUserFlow(browser, base, flow, tasks);
+  assertResourceErrors(resourceErrors, true);
+  assert.equal(errors.length, 0, [...new Set(errors.map(e => e.split('\n')[0]))].join('; ')); assert.deepEqual(dialogs, []);
+  console.log('Compatibility warnings:', JSON.stringify([...new Set(warnings)]));
+  console.log('Resource console messages:', JSON.stringify([...new Set(resourceErrors)]));
   console.log(`Flow browser checks passed. ${writes.length} intercepted POSTs; zero server writes; shuffle mocked (${shuffles}).`);
-} finally { await context.close(); await browser.close(); }
+} finally {
+  if (errors.length) console.error('Browser errors:', JSON.stringify([...new Set(errors.map(e => e.split('\n')[0]))]));
+  await context.close(); await browser.close();
+}

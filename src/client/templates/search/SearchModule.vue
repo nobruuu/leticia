@@ -360,7 +360,7 @@ export default {
         .then(res => console.log(res.data))
         .catch(err => console.error(err));
 
-      this.$router.push({ path: '/extended-challenge/search', query: { task: this.taskId, q: this.query, p: (this.currentPage || 1) }});
+      this.$router.push({ path: '/extended-challenge/search', query: { task: this.taskId, q: this.query, p: (page || 1) }});
     },
     searchResultClick(evt, doc) {
       this.$store.commit({ type: 'setLastVisitedDoc', doc });

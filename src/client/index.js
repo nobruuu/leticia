@@ -1,6 +1,7 @@
 import './modules/compat';
 import { createApp } from 'vue';
 import BootstrapVue from 'bootstrap-vue';
+import bootstrapVueCompat from './modules/bootstrapVueCompat';
 import legacyPlugins from './modules/legacyPlugins';
 import vSelect from 'vue-select';
 import { createI18n } from 'vue-i18n';
@@ -38,6 +39,7 @@ app.use(router);
 app.use(store);
 app.use(i18n);
 app.use(BootstrapVue);
+app.use(bootstrapVueCompat);
 app.use(VueCookies);
 app.use(legacyPlugins);
 app.component('font-awesome-icon', FontAwesomeIcon);

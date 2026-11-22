@@ -41,9 +41,9 @@
           <b-col cols="9">
             <b-progress :max="100" height="2rem">
               <b-progress-bar :value="completedPerc">
-                <i18n path="typingTest.completedBar" tag="span">
+                <i18n-t keypath="typingTest.completedBar" tag="span">
                   <strong>{{ completedPerc }}%</strong>
-                </i18n>
+                </i18n-t>
               </b-progress-bar>
             </b-progress>
           </b-col>

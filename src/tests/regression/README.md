@@ -170,8 +170,8 @@ Pruebas dirigidas con otra cuenta E2E si corresponde:
 - doc01 tiene metadata keydown y URL/contenido mousemove; el smoke valida identidad
   y disponibilidad local, no que esa metadata sea semánticamente correcta.
 - El botón usa tres bookmarks; no prueba que SessionFlow.minDocs controle el umbral.
-- `Challenge.vue` trata índice 0 como inicio; registrar una reasignación al reanudar
-  como hallazgo existente, sin ocultarlo ni corregirlo desde los tests.
+- La restauración del índice 0 y la conservación de la asignación están cubiertas
+  por las pruebas de flujo; un snapshot válido no debe provocar otro shuffle.
 - No hay sessionId global ni flag explícito de estudio completado; UserData es el
   último snapshot. La guía manual no promete reconstrucción completa de telemetría.
 
@@ -212,25 +212,58 @@ reasigna automáticamente. La configuración frontend sólo sirve de fallback cu
 no existe flow válido ni asignación. Las pruebas verifican la restauración del
 índice 0 sin reasignar tareas.
 
-`flow-browser.mjs` es un recorrido corto complementario en Chromium con Playwright
-externo al proyecto. Usa el build real, GET reales para flow/tasks/search/documentos,
-identidad local ficticia y shuffle/POST interceptados; no escribe datos experimentales.
-Comprueba snapshot inicial antes de salir, recarga/reentrada, avance único y tres
-ciclos Search/documento/back con id, URL, PageEnter/PageExit, trackers y timer;
-además verifica el rechazo visible de id incorrecto tras recarga.
+`flow-browser.mjs` ejecuta Chromium con Playwright externo al proyecto sobre el build
+publicado. Conserva los GET reales de flow/tasks/search/documentos y bloquea el
+shuffle y todos los POST mediante fixtures. No escribe datos experimentales.
+`browser-runtime.mjs` obtiene app/router/store mediante `__vue_app__` y las
+propiedades globales de Vue 3. La búsqueda privada de VNodes queda limitada al
+helper de test: sólo permite inspeccionar timer/validator y montar las dos vistas
+Search reales; no agrega instrumentación al código productivo.
+
+Comprueba snapshot inicial antes de navegar, recarga/reentrada con índice 0 y orden
+estable, rollback por persistencia fallida, escritura pendiente sin doble avance,
+tres ciclos Search/documento/back, alto útil del iframe, id/query sin transporte por params, URL y eventos
+PageEnter/PageExit únicos. CDP inspecciona los listeners del contexto real del iframe:
+mousemove/click/scroll = 1/1/1, con un control positivo que detecta un segundo click
+listener y verificación de destrucción de cada contexto anterior. También conserva
+los cinco tipos de click en ambos Search frente al contrato de Router 3, búsqueda
+real y paginación (total ampliado sólo en el fixture, sin alterar el corpus de cinco
+documentos). El documento inconsistente se rechaza también después de recargar.
+
+`user-flow-browser.mjs` agrega un usuario nuevo en un contexto aislado y recorre
+flow1 mediante controles reales: guard/login, consentimiento, demographic,
+instrucciones y las dos tareas completas (ready/description/pretask/search,
+modal, documentos, bookmark/unbookmark, NASA-TLX/posttask), hasta End. La identidad
+de login y cookies es ficticia; no certifica autenticación remota ni escribe en Mongo.
+Comprueba las seis respuestas y score interceptados, estructura/URLs de Actions,
+bookmarks, snapshots finales y un máximo de un timer/buffer activo, con cleanup al
+terminar. Recarga un documento, restaura bookmarks/timer y reanuda sin reasignación.
+
+Los campos con `v-validate` y los submit con `$validator` del baseline están
+comentados. La validación nativa inválida bloquea el login; una regla temporal
+required/email sobre el campo y `$validator` reales comprueba el plugin legacy con
+valores inválidos/válidos. No se activa una nueva política de validación en la app.
+Las excepciones de JavaScript y errores de consola inesperados hacen fallar la
+prueba. El fallo HTTP de snapshot provocado se verifica por separado. Los warnings
+y errores de recursos se informan sin silenciarlos; los assets MDN locales no se
+modifican desde el test. Sólo se admiten los dos 404 históricos de fuentes MDN;
+cualquier otro error de recurso hace fallar el test. Un control adicional de
+TypingTest verifica la interpolación del progreso con entrada real y avance Next.
 
 Ejemplo con una imagen local que ya contenga Playwright/Chromium y la webapp activa:
 
 ```bash
 docker run --rm --pull=never --network container:leticia-webapp \
-  --mount "type=bind,source=$PWD/src/tests/regression/flow-browser.mjs,target=/tmp/flow-browser.mjs,readonly" \
-  --entrypoint node IMAGEN_LOCAL_CON_PLAYWRIGHT /tmp/flow-browser.mjs
+  --mount "type=bind,source=$PWD/src/tests/regression,target=/tmp/regression,readonly" \
+  --entrypoint node IMAGEN_LOCAL_CON_PLAYWRIGHT /tmp/regression/flow-browser.mjs
 ```
 
 Opcionales: `FLOW_TEST_PLAYWRIGHT_MODULE` (ruta absoluta al módulo externo) y
 `FLOW_TEST_BASE_URL` (default `http://localhost:3000`). No instala herramientas ni cambia
 las dependencias del runtime LETICIA. Estas pruebas controladas complementan el
 smoke y `test:persistence` read-only; no sustituyen un estudio E2E con escrituras.
+`FLOW_TEST_ARTIFACT_DIR`, opcional, guarda capturas del recorrido en un directorio
+ya existente fuera del repositorio (montarlo en el contenedor si corresponde).
 
 
 ## Montaje del frontend con compat
@@ -266,13 +299,19 @@ docker run --rm --pull=never --network container:leticia-webapp \
 Deuda temporal que no equivale a un error fatal de montaje:
 
 - Vue compat: render functions heredadas y `beforeDestroy`; se mantienen en modo 2.
+  Vue 3 conserva el contenedor de montaje: `#app` propaga height: 100% para que
+  el iframe conserve la altura útil del layout anterior, comprobada en el browser.
 - Router: `currentRoute` es un ref; las lecturas imperativas usan `.value`.
-  El browser funcional anterior depende de introspección/constructores Vue 2 y
-  requiere adaptación antes de certificar todo el recorrido experimental.
+  El browser funcional usa el router montado y conserva las assertions anteriores.
 - BootstrapVue: se conserva su capa compat de render/slots/eventos y PortalVue 2.
-  El build advierte sobre anotaciones `PURE` de la librería.
-- i18n: el modo legacy está deprecado en v11; los componentes antiguos `<i18n>`
-  de interpolación permanecen pendientes de revisión funcional.
+  `bootstrapVueCompat.js` limita la directiva model local de checkbox/radio/select
+  a sincronización DOM: sus renders Vue 2 ya registran change y no proporcionan
+  el setter nativo de Vue 3. La paginación usa el valor del evento input porque
+  compat ejecuta el listener antes de actualizar v-model. No cambia el umbral de
+  bookmarks. El build advierte sobre anotaciones `PURE`; el detector antiguo de
+  múltiples Vue compara constructor/app aunque ambos usan el mismo runtime compat.
+- i18n: el modo legacy está deprecado en v11. La interpolación de progreso usa
+  `i18n-t`/`keypath` en UserHub y TypingTest, conservando los textos existentes.
 - Tests: `node:vm` usa módulos experimentales; el renderer controlado no certifica
   el DOM ni la interacción completa con los widgets retenidos.
 - Otros: CSS `>>>`/`/deep/` deprecado, bundles grandes, dependencias históricas.
